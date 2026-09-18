@@ -35,6 +35,18 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+async def root():
+    """Root endpoint providing service status and quick links."""
+    return {
+        "status": "ok",
+        "service": "GridWise LLM Service",
+        "event": "BUP CSE Fest 2026",
+        "health_check": "/health",
+        "docs": "/docs"
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Readiness endpoint for the judging harness."""
