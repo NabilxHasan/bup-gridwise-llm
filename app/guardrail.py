@@ -77,27 +77,66 @@ def validate_and_repair_directive(
         raw_factor = adj.get("factor")
         try:
             factor = float(raw_factor)
-            factor = max(0.0, min(1.0, factor))
+            if factor < 0.0 or factor > 1.0:
+                return DirectiveInterpretationEntry(
+                    note_index=expected_index,
+                    applies=False,
+                    directive_type="no_op",
+                    structured_adjustment=None,
+                    explanation=f"Out of range solar factor ({factor}); rejected to no_op.",
+                )
         except (ValueError, TypeError):
-            factor = 1.0
+            return DirectiveInterpretationEntry(
+                note_index=expected_index,
+                applies=False,
+                directive_type="no_op",
+                structured_adjustment=None,
+                explanation="Malformed solar factor; rejected to no_op.",
+            )
         sanitized_adj["factor"] = factor
 
     elif directive_type == "minimum_battery_reserve":
         raw_min = adj.get("minimum_energy_kwh")
         try:
             min_kwh = float(raw_min)
-            min_kwh = max(0.0, min(battery_capacity, min_kwh))
+            if min_kwh < 0.0 or min_kwh > battery_capacity:
+                return DirectiveInterpretationEntry(
+                    note_index=expected_index,
+                    applies=False,
+                    directive_type="no_op",
+                    structured_adjustment=None,
+                    explanation=f"Out of bounds battery reserve ({min_kwh}); rejected to no_op.",
+                )
         except (ValueError, TypeError):
-            min_kwh = 0.0
+            return DirectiveInterpretationEntry(
+                note_index=expected_index,
+                applies=False,
+                directive_type="no_op",
+                structured_adjustment=None,
+                explanation="Malformed battery reserve; rejected to no_op.",
+            )
         sanitized_adj["minimum_energy_kwh"] = min_kwh
 
     elif directive_type == "max_grid_window":
         raw_max = adj.get("max_grid_kwh")
         try:
             max_grid = float(raw_max)
-            max_grid = max(0.0, max_grid)
+            if max_grid < 0.0:
+                return DirectiveInterpretationEntry(
+                    note_index=expected_index,
+                    applies=False,
+                    directive_type="no_op",
+                    structured_adjustment=None,
+                    explanation=f"Negative grid cap ({max_grid}); rejected to no_op.",
+                )
         except (ValueError, TypeError):
-            max_grid = 1e6
+            return DirectiveInterpretationEntry(
+                note_index=expected_index,
+                applies=False,
+                directive_type="no_op",
+                structured_adjustment=None,
+                explanation="Malformed grid cap; rejected to no_op.",
+            )
         sanitized_adj["max_grid_kwh"] = max_grid
 
     elif directive_type in ("no_charge_window", "no_discharge_window"):

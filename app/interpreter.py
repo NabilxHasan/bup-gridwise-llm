@@ -240,7 +240,7 @@ def deterministic_fallback_interpret(
 
 
 async def call_llm_api(notes: List[str], battery: BatteryInput) -> Optional[List[Dict[str, Any]]]:
-    """Calls Gemini or OpenAI-compatible endpoint with strict JSON schema output."""
+    """Calls Gemini or OpenAI-compatible endpoint with strict JSON schema output and retry logic."""
     gemini_key = os.environ.get("GEMINI_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
     groq_key = os.environ.get("GROQ_API_KEY")
@@ -255,7 +255,7 @@ Operator Notes to Interpret:
     for i, note in enumerate(notes):
         prompt_content += f"Note {i}: {note}\n"
 
-    # Priority 1: Native Gemini API
+    # Priority 1: Native Gemini API with retry
     if gemini_key:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
         payload = {
@@ -266,21 +266,31 @@ Operator Notes to Interpret:
                 "temperature": 0.0,
             },
         }
-        try:
-            async with httpx.AsyncClient(timeout=3.5) as client:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        text_resp = candidates[0]["content"]["parts"][0]["text"]
-                        parsed = json.loads(text_resp)
-                        if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
-                            return parsed["directive_interpretation"]
-        except Exception as e:
-            logger.warning(f"Gemini API call failed or timed out: {e}")
+        for attempt in range(1, 3):
+            try:
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            text_resp = candidates[0]["content"]["parts"][0]["text"]
+                            parsed = json.loads(text_resp)
+                            if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
+                                return parsed["directive_interpretation"]
+                    elif resp.status_code == 429:
+                        logger.warning(f"Gemini 429 Rate Limit on attempt {attempt}/2. Backing off 0.8s...")
+                        import asyncio
+                        await asyncio.sleep(0.8)
+                    else:
+                        logger.warning(f"Gemini API returned HTTP {resp.status_code} on attempt {attempt}/2: {resp.text[:150]}")
+            except Exception as e:
+                logger.warning(f"Gemini API attempt {attempt}/2 failed or timed out: {e}")
+                if attempt == 1:
+                    import asyncio
+                    await asyncio.sleep(0.5)
 
-    # Priority 2: OpenAI / Groq / Puku OpenAI-compatible endpoints
+    # Priority 2: OpenAI / Groq / Puku OpenAI-compatible endpoints with retry
     api_key = openai_key or groq_key or puku_key
     if api_key:
         if groq_key:
@@ -306,18 +316,29 @@ Operator Notes to Interpret:
             "response_format": {"type": "json_object"},
             "temperature": 0.0,
         }
-        try:
-            async with httpx.AsyncClient(timeout=3.5) as client:
-                resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    parsed = json.loads(content)
-                    if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
-                        return parsed["directive_interpretation"]
-        except Exception as e:
-            logger.warning(f"OpenAI/Groq call failed or timed out: {e}")
+        for attempt in range(1, 3):
+            try:
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        parsed = json.loads(content)
+                        if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
+                            return parsed["directive_interpretation"]
+                    elif resp.status_code == 429:
+                        logger.warning(f"OpenAI/Groq 429 Rate Limit on attempt {attempt}/2. Backing off 0.8s...")
+                        import asyncio
+                        await asyncio.sleep(0.8)
+                    else:
+                        logger.warning(f"OpenAI/Groq API returned HTTP {resp.status_code} on attempt {attempt}/2: {resp.text[:150]}")
+            except Exception as e:
+                logger.warning(f"OpenAI/Groq attempt {attempt}/2 failed or timed out: {e}")
+                if attempt == 1:
+                    import asyncio
+                    await asyncio.sleep(0.5)
 
+    logger.warning(f"All LLM attempts failed or credentials missing for notes: {notes}. Triggering deterministic fallback parser.")
     return None
 
 
@@ -329,6 +350,10 @@ async def interpret_operator_notes(
     raw_interpretations = await call_llm_api(notes, battery)
 
     if not raw_interpretations:
+        logger.warning(
+            f"[FALLBACK TRIGGERED] LLM interpretation unavailable for {len(notes)} notes: {notes}. "
+            f"Invoking deterministic regex/keyword fallback parser."
+        )
         raw_interpretations = deterministic_fallback_interpret(notes, battery)
 
     guarded_entries = apply_guardrails(

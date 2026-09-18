@@ -1,6 +1,7 @@
 import os
 import logging
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -25,6 +26,20 @@ app = FastAPI(
     description="LLM-Assisted Smart Campus Energy Scheduling Service for BUP CSE Fest 2026",
     version="2.0.0",
 )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Map malformed JSON / missing structure to 400, and schema violations to 422 per Section 06.1."""
+    for err in exc.errors():
+        if err.get("type") in ("json_invalid", "missing"):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Malformed JSON or structurally invalid request."},
+            )
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "Semantically invalid but well-formed request.", "errors": exc.errors()},
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -113,8 +128,11 @@ async def optimize_energy(req: OptimizeEnergyRequest):
         )
 
     except ValueError as ve:
-        logger.warning(f"Optimization value error: {ve}")
-        raise HTTPException(status_code=422, detail="Infeasible or invalid scenario parameters.")
+        logger.error(f"Controlled optimization solver error: {ve}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Controlled internal optimization solver error."},
+        )
     except Exception as e:
         logger.error(f"Controlled server error: {e}", exc_info=True)
         # Never leak secrets or raw traces per Section 06.1
