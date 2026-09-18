@@ -255,7 +255,45 @@ Operator Notes to Interpret:
     for i, note in enumerate(notes):
         prompt_content += f"Note {i}: {note}\n"
 
-    # Priority 1: Native Gemini API with retry
+    # Priority 1: Groq API (Ultra-low latency LPU, generous free quota)
+    if groq_key:
+        headers = {
+            "Authorization": f"Bearer {groq_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt_content},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.0,
+        }
+        for attempt in range(1, 4):
+            try:
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    resp = await client.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        parsed = json.loads(content)
+                        if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
+                            return parsed["directive_interpretation"]
+                    elif resp.status_code == 429:
+                        backoff = 1.0 * attempt
+                        logger.warning(f"Groq 429 Rate Limit on attempt {attempt}/3. Backing off {backoff:.1f}s...")
+                        import asyncio
+                        await asyncio.sleep(backoff)
+                    else:
+                        logger.warning(f"Groq API returned HTTP {resp.status_code} on attempt {attempt}/3: {resp.text[:150]}")
+            except Exception as e:
+                logger.warning(f"Groq API attempt {attempt}/3 failed: {e}")
+                if attempt < 3:
+                    import asyncio
+                    await asyncio.sleep(0.4)
+
+    # Priority 2: Native Gemini API with retry
     if gemini_key:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
         payload = {
@@ -291,18 +329,11 @@ Operator Notes to Interpret:
                     import asyncio
                     await asyncio.sleep(0.5)
 
-    # Priority 2: OpenAI / Groq / Puku OpenAI-compatible endpoints with retry
-    api_key = openai_key or groq_key or puku_key
+    # Priority 3: OpenAI / Puku OpenAI-compatible endpoints with retry
+    api_key = openai_key or puku_key
     if api_key:
-        if groq_key:
-            base_url = "https://api.groq.com/openai/v1"
-            model = "llama-3.1-8b-instant"
-        elif puku_key:
-            base_url = "https://api.puku.sh/v1"
-            model = "gpt-4o-mini"
-        else:
-            base_url = "https://api.openai.com/v1"
-            model = "gpt-4o-mini"
+        base_url = "https://api.puku.sh/v1" if puku_key else "https://api.openai.com/v1"
+        model = "gpt-4o-mini"
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -329,13 +360,13 @@ Operator Notes to Interpret:
                             return parsed["directive_interpretation"]
                     elif resp.status_code == 429:
                         backoff = 1.2 * attempt
-                        logger.warning(f"OpenAI/Groq 429 Rate Limit on attempt {attempt}/3. Backing off {backoff:.1f}s...")
+                        logger.warning(f"OpenAI 429 Rate Limit on attempt {attempt}/3. Backing off {backoff:.1f}s...")
                         import asyncio
                         await asyncio.sleep(backoff)
                     else:
-                        logger.warning(f"OpenAI/Groq API returned HTTP {resp.status_code} on attempt {attempt}/3: {resp.text[:150]}")
+                        logger.warning(f"OpenAI API returned HTTP {resp.status_code} on attempt {attempt}/3: {resp.text[:150]}")
             except Exception as e:
-                logger.warning(f"OpenAI/Groq attempt {attempt}/3 failed or timed out: {e}")
+                logger.warning(f"OpenAI attempt {attempt}/3 failed or timed out: {e}")
                 if attempt < 3:
                     import asyncio
                     await asyncio.sleep(0.5)
