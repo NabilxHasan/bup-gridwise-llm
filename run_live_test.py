@@ -1,12 +1,15 @@
 import argparse
 import time
 import json
+from pathlib import Path
 import httpx
+
+DEFAULT_DATA_PATH = Path(__file__).resolve().parent / "data" / "sample_cases.json"
 
 def main():
     parser = argparse.ArgumentParser(description="GridWise Remote or Local API Tester")
     parser.add_argument("--url", default="https://bup-gridwise-llm.onrender.com", help="Base URL of service")
-    parser.add_argument("--sample", default=r"C:\Users\nabil\Downloads\BUP_CSE_FEST_2026_Participant_Docs\BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json", help="Path to sample cases JSON")
+    parser.add_argument("--sample", default=str(DEFAULT_DATA_PATH), help="Path to sample cases JSON")
     args = parser.parse_args()
 
     base_url = args.url.rstrip("/")

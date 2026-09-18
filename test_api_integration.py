@@ -1,8 +1,16 @@
+import os
 import json
+from pathlib import Path
+
+# Enable offline mock for local testing without external API quota constraints
+os.environ["GRIDWISE_DEV_OFFLINE_MOCK"] = "1"
+
 from fastapi.testclient import TestClient
 from app.main import app
 
 client = TestClient(app)
+
+DATA_PATH = Path(__file__).resolve().parent / "data" / "sample_cases.json"
 
 def test_health():
     resp = client.get("/health")
@@ -12,7 +20,7 @@ def test_health():
     print("[PASS] GET /health returns 200 and {'status': 'ok'}")
 
 def test_sample_cases():
-    with open(r"C:\Users\nabil\Downloads\BUP_CSE_FEST_2026_Participant_Docs\BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json", "r", encoding="utf-8") as f:
+    with open(DATA_PATH, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     all_passed = True

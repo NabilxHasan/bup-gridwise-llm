@@ -15,6 +15,7 @@ def solve_energy_schedule(
     Guarantees mathematically optimal grid cost while satisfying all physical and directive constraints.
     """
     N = 24
+    hours = sorted(hours, key=lambda h: h.hour)
     demand = np.array([h.demand_kwh for h in hours], dtype=float)
     solar = np.array([h.solar_kwh for h in hours], dtype=float)
     tariff = np.array([h.tariff_bdt_per_kwh for h in hours], dtype=float)

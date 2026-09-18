@@ -1,11 +1,12 @@
 import json
 import sys
+from pathlib import Path
 from app.models import HourInput, BatteryInput, DirectiveInterpretationEntry
 from app.optimizer import solve_energy_schedule
 from app.verifier import verify_schedule
 
 def run():
-    sample_path = r"C:\Users\nabil\Downloads\BUP_CSE_FEST_2026_Participant_Docs\BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json"
+    sample_path = Path(__file__).resolve().parent / "data" / "sample_cases.json"
     with open(sample_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 

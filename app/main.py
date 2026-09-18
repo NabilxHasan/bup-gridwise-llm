@@ -14,7 +14,7 @@ from app.models import (
     OptimizeEnergyRequest,
     OptimizeEnergyResponse,
 )
-from app.interpreter import interpret_operator_notes
+from app.interpreter import interpret_operator_notes, LLMUnavailableError
 from app.optimizer import solve_energy_schedule
 from app.verifier import verify_schedule
 
@@ -27,6 +27,8 @@ app = FastAPI(
     version="2.0.0",
 )
 
+from fastapi.encoders import jsonable_encoder
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Map malformed JSON / missing structure to 400, and schema violations to 422 per Section 06.1."""
@@ -38,7 +40,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             )
     return JSONResponse(
         status_code=422,
-        content={"detail": "Semantically invalid but well-formed request.", "errors": exc.errors()},
+        content={"detail": "Semantically invalid but well-formed request.", "errors": jsonable_encoder(exc.errors())},
     )
 
 app.add_middleware(
@@ -102,7 +104,10 @@ async def optimize_energy(req: OptimizeEnergyRequest):
 
         if not verified:
             logger.error(f"Internal schedule verification failed: {verif_msg}")
-            # Even in an edge case, return best valid schedule rather than crashing
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Controlled internal error: schedule failed mathematical verification."},
+            )
 
         # Generate concise plan summary
         applied_types = [d.directive_type for d in directives if d.applies]
@@ -127,6 +132,12 @@ async def optimize_energy(req: OptimizeEnergyRequest):
             plan_summary=plan_summary,
         )
 
+    except LLMUnavailableError as le:
+        logger.error(f"Controlled LLM error: {le}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Controlled internal error: language model unavailable for operator notes."},
+        )
     except ValueError as ve:
         logger.error(f"Controlled optimization solver error: {ve}")
         return JSONResponse(

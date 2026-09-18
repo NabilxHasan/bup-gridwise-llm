@@ -13,17 +13,38 @@ VALID_DIRECTIVE_TYPES = {
 
 
 def sanitize_hours(hours_val: Any) -> List[int]:
-    """Ensure hours are unique integers from 0 to 23 in strictly ascending order."""
-    if not isinstance(hours_val, (list, tuple)):
+    """
+    Ensure hours are strictly valid integers from 0 to 23 in ascending order.
+    Rejects malformed values (e.g., floats with decimals like 13.8, booleans, out-of-range numbers)
+    by returning [] so the directive is safely rejected to no_op per Section 08.
+    """
+    if not isinstance(hours_val, (list, tuple)) or not hours_val:
         return []
     valid_h = set()
     for h in hours_val:
-        try:
-            h_int = int(h)
-            if 0 <= h_int <= 23:
-                valid_h.add(h_int)
-        except (ValueError, TypeError):
-            continue
+        if isinstance(h, bool):
+            return []  # Booleans are not valid hours
+        if isinstance(h, int):
+            if 0 <= h <= 23:
+                valid_h.add(h)
+            else:
+                return []
+        elif isinstance(h, float):
+            if h.is_integer() and 0 <= int(h) <= 23:
+                valid_h.add(int(h))
+            else:
+                return []  # e.g., 13.8 is rejected, not silently truncated
+        elif isinstance(h, str):
+            try:
+                val = float(h)
+                if val.is_integer() and 0 <= int(val) <= 23:
+                    valid_h.add(int(val))
+                else:
+                    return []
+            except (ValueError, TypeError):
+                return []
+        else:
+            return []
     return sorted(list(valid_h))
 
 

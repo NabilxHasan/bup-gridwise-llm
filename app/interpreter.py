@@ -266,9 +266,9 @@ Operator Notes to Interpret:
                 "temperature": 0.0,
             },
         }
-        for attempt in range(1, 3):
+        for attempt in range(1, 4):
             try:
-                async with httpx.AsyncClient(timeout=4.0) as client:
+                async with httpx.AsyncClient(timeout=4.5) as client:
                     resp = await client.post(url, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
@@ -279,14 +279,15 @@ Operator Notes to Interpret:
                             if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
                                 return parsed["directive_interpretation"]
                     elif resp.status_code == 429:
-                        logger.warning(f"Gemini 429 Rate Limit on attempt {attempt}/2. Backing off 0.8s...")
+                        backoff = 1.2 * attempt
+                        logger.warning(f"Gemini 429 Rate Limit on attempt {attempt}/3. Backing off {backoff:.1f}s...")
                         import asyncio
-                        await asyncio.sleep(0.8)
+                        await asyncio.sleep(backoff)
                     else:
-                        logger.warning(f"Gemini API returned HTTP {resp.status_code} on attempt {attempt}/2: {resp.text[:150]}")
+                        logger.warning(f"Gemini API returned HTTP {resp.status_code} on attempt {attempt}/3: {resp.text[:150]}")
             except Exception as e:
-                logger.warning(f"Gemini API attempt {attempt}/2 failed or timed out: {e}")
-                if attempt == 1:
+                logger.warning(f"Gemini API attempt {attempt}/3 failed or timed out: {e}")
+                if attempt < 3:
                     import asyncio
                     await asyncio.sleep(0.5)
 
@@ -316,9 +317,9 @@ Operator Notes to Interpret:
             "response_format": {"type": "json_object"},
             "temperature": 0.0,
         }
-        for attempt in range(1, 3):
+        for attempt in range(1, 4):
             try:
-                async with httpx.AsyncClient(timeout=4.0) as client:
+                async with httpx.AsyncClient(timeout=4.5) as client:
                     resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
                     if resp.status_code == 200:
                         data = resp.json()
@@ -327,34 +328,53 @@ Operator Notes to Interpret:
                         if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
                             return parsed["directive_interpretation"]
                     elif resp.status_code == 429:
-                        logger.warning(f"OpenAI/Groq 429 Rate Limit on attempt {attempt}/2. Backing off 0.8s...")
+                        backoff = 1.2 * attempt
+                        logger.warning(f"OpenAI/Groq 429 Rate Limit on attempt {attempt}/3. Backing off {backoff:.1f}s...")
                         import asyncio
-                        await asyncio.sleep(0.8)
+                        await asyncio.sleep(backoff)
                     else:
-                        logger.warning(f"OpenAI/Groq API returned HTTP {resp.status_code} on attempt {attempt}/2: {resp.text[:150]}")
+                        logger.warning(f"OpenAI/Groq API returned HTTP {resp.status_code} on attempt {attempt}/3: {resp.text[:150]}")
             except Exception as e:
-                logger.warning(f"OpenAI/Groq attempt {attempt}/2 failed or timed out: {e}")
-                if attempt == 1:
+                logger.warning(f"OpenAI/Groq attempt {attempt}/3 failed or timed out: {e}")
+                if attempt < 3:
                     import asyncio
                     await asyncio.sleep(0.5)
 
-    logger.warning(f"All LLM attempts failed or credentials missing for notes: {notes}. Triggering deterministic fallback parser.")
+    logger.warning(f"All LLM attempts failed or credentials missing for notes: {notes}.")
     return None
+
+
+class LLMUnavailableError(Exception):
+    """Raised when language model interpretation is unavailable in production."""
+    pass
 
 
 async def interpret_operator_notes(
     notes: List[str],
     battery: BatteryInput,
 ) -> List[DirectiveInterpretationEntry]:
-    """Interprets notes via LLM with deterministic guardrails and instantaneous fallback."""
-    raw_interpretations = await call_llm_api(notes, battery)
+    """
+    Interprets notes via LLM with deterministic guardrails.
+    Per Section 04 of the BUP CSE Fest Rulebook, a language-capable generative model
+    is mandatory for operator-note interpretation in the evaluation path.
+    """
+    dev_mock = os.environ.get("GRIDWISE_DEV_OFFLINE_MOCK", "0").lower() in ("1", "true", "yes")
 
-    if not raw_interpretations:
-        logger.warning(
-            f"[FALLBACK TRIGGERED] LLM interpretation unavailable for {len(notes)} notes: {notes}. "
-            f"Invoking deterministic regex/keyword fallback parser."
+    if dev_mock:
+        logger.info(
+            f"[OFFLINE DEV MOCK] Parsing {len(notes)} notes using offline parser for local testing."
         )
         raw_interpretations = deterministic_fallback_interpret(notes, battery)
+    else:
+        raw_interpretations = await call_llm_api(notes, battery)
+        if not raw_interpretations:
+            logger.error(
+                f"[LLM UNAVAILABLE] All language model attempts failed for operator notes: {notes}. "
+                "Per BUP CSE Fest Rule 04, a generative language model is mandatory for operator note interpretation."
+            )
+            raise LLMUnavailableError(
+                "LLM interpretation service unavailable. Operator note interpretation requires active language model."
+            )
 
     guarded_entries = apply_guardrails(
         raw_interpretations,

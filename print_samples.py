@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 
-with open(r"C:\Users\nabil\Downloads\BUP_CSE_FEST_2026_Participant_Docs\BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json", "r", encoding="utf-8") as f:
+sample_path = Path(__file__).resolve().parent / "data" / "sample_cases.json"
+with open(sample_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
 for c in data["cases"]:

@@ -1,5 +1,5 @@
 from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class HourInput(BaseModel):
@@ -22,6 +22,17 @@ class OptimizeEnergyRequest(BaseModel):
     operator_notes: List[str] = Field(..., min_length=1, max_length=3)
     hours: List[HourInput] = Field(..., min_length=24, max_length=24)
     battery: BatteryInput
+
+    @field_validator("hours")
+    @classmethod
+    def validate_hours_sequence(cls, v: List[HourInput]) -> List[HourInput]:
+        if len(v) != 24:
+            raise ValueError("hours array must contain exactly 24 entries.")
+        expected_hours = list(range(24))
+        actual_hours = [h.hour for h in v]
+        if actual_hours != expected_hours:
+            raise ValueError(f"hours array must contain hours 0 through 23 in strict ascending order, got {actual_hours}.")
+        return v
 
 
 class DirectiveInterpretationEntry(BaseModel):

@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 from app.models import BatteryInput
 from app.interpreter import deterministic_fallback_interpret, parse_time_window
 from app.guardrail import apply_guardrails
 
 def test_all():
-    with open(r"C:\Users\nabil\Downloads\BUP_CSE_FEST_2026_Participant_Docs\BUP_CSE_FEST_2026_Preli_Public_Sample_Cases.json", "r", encoding="utf-8") as f:
+    sample_path = Path(__file__).resolve().parent / "data" / "sample_cases.json"
+    with open(sample_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
     all_matched = True
