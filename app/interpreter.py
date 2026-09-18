@@ -21,11 +21,12 @@ Each operator note must map to EXACTLY ONE of the following 6 directive types:
    - "drop to 20%" means factor is 0.2.
    - "leave about half" means factor is 0.5.
    - "roughly one-fifth" means factor is 0.2.
+   - "roughly 25%" means factor is 0.25.
 
 2. minimum_battery_reserve: keep battery energy at or above a required level.
    structured_adjustment: {"hours": [sorted ascending unique ints 0..23], "minimum_energy_kwh": float}
-   - If stated in kWh (e.g., "at least 80 kWh", "90 kWh in the battery"), use 80.0 / 90.0.
-   - If stated as percentage of battery capacity (e.g. "at least 50% of capacity"), calculate: (pct / 100) * battery_capacity_kwh.
+   - If stated in kWh (e.g. "at least 90 kWh", "80 kWh to remain in the battery"), use that number.
+   - If stated as percentage of battery capacity (e.g. "at least 50% of the battery capacity"), calculate: (pct / 100) * battery_capacity_kwh.
 
 3. no_charge_window: battery charging unavailable.
    structured_adjustment: {"hours": [sorted ascending unique ints 0..23]}
@@ -33,7 +34,7 @@ Each operator note must map to EXACTLY ONE of the following 6 directive types:
 4. no_discharge_window: battery discharging unavailable.
    structured_adjustment: {"hours": [sorted ascending unique ints 0..23]}
 
-5. max_grid_window: grid import cannot exceed a limit.
+5. max_grid_window: grid import cannot exceed a stated amount.
    structured_adjustment: {"hours": [sorted ascending unique ints 0..23], "max_grid_kwh": float}
 
 6. no_op: note does not affect the 24-hour schedule (e.g. cafeteria menu, library hours, seminar room bookings, sports deadlines).
@@ -49,15 +50,17 @@ Start hour is INCLUDED, end hour is EXCLUDED.
 - "6 PM until 9 PM" -> [18, 19, 20]
 - "2 AM until 5 AM" -> [2, 3, 4]
 - "between 11 AM and 2 PM" -> [11, 12, 13]
+- "6 PM until 10 PM" -> [18, 19, 20, 21]
 
-Output strictly a JSON object:
+OUTPUT FORMAT:
+Return strictly a JSON object:
 {
   "directive_interpretation": [
     {
       "note_index": 0,
-      "applies": true/false,
+      "applies": true,
       "directive_type": "...",
-      "structured_adjustment": {...} or null,
+      "structured_adjustment": {...},
       "explanation": "..."
     }
   ]
@@ -123,10 +126,7 @@ def deterministic_fallback_interpret(
     notes: List[str],
     battery: BatteryInput,
 ) -> List[Dict[str, Any]]:
-    """
-    High-precision deterministic rule parser for operator notes.
-    Used as an instantaneous fallback if LLM times out or is offline.
-    """
+    """High-precision deterministic rule parser for operator notes as a fallback."""
     results = []
     for idx, note in enumerate(notes):
         n_lower = note.lower()
@@ -240,30 +240,11 @@ def deterministic_fallback_interpret(
 
 
 async def call_llm_api(notes: List[str], battery: BatteryInput) -> Optional[List[Dict[str, Any]]]:
-    """Calls the active LLM provider (Groq, OpenAI, Gemini, or Puku) with strict JSON schema output."""
-    api_key = (
-        os.environ.get("PUKU_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("GROQ_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-    )
-    if not api_key:
-        return None
-
-    if os.environ.get("PUKU_API_KEY"):
-        base_url = "https://api.puku.sh/v1"
-        model = "gpt-4o-mini"
-    elif os.environ.get("GROQ_API_KEY"):
-        base_url = "https://api.groq.com/openai/v1"
-        model = "llama-3.1-8b-instant"
-    elif os.environ.get("OPENAI_API_KEY"):
-        base_url = "https://api.openai.com/v1"
-        model = "gpt-4o-mini"
-    elif os.environ.get("GEMINI_API_KEY"):
-        base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-        model = "gemini-1.5-flash"
-    else:
-        return None
+    """Calls Gemini or OpenAI-compatible endpoint with strict JSON schema output."""
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    groq_key = os.environ.get("GROQ_API_KEY")
+    puku_key = os.environ.get("PUKU_API_KEY")
 
     prompt_content = f"""Scenario Battery Parameters:
 - capacity_kwh: {battery.capacity_kwh}
@@ -274,31 +255,68 @@ Operator Notes to Interpret:
     for i, note in enumerate(notes):
         prompt_content += f"Note {i}: {note}\n"
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt_content},
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.0,
-    }
+    # Priority 1: Native Gemini API
+    if gemini_key:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt_content}]}],
+            "systemInstruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "temperature": 0.0,
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=3.5) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        text_resp = candidates[0]["content"]["parts"][0]["text"]
+                        parsed = json.loads(text_resp)
+                        if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
+                            return parsed["directive_interpretation"]
+        except Exception as e:
+            logger.warning(f"Gemini API call failed or timed out: {e}")
 
-    try:
-        async with httpx.AsyncClient(timeout=3.5) as client:
-            resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                parsed = json.loads(content)
-                if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
-                    return parsed["directive_interpretation"]
-    except Exception as e:
-        logger.warning(f"LLM API call failed or timed out: {e}")
+    # Priority 2: OpenAI / Groq / Puku OpenAI-compatible endpoints
+    api_key = openai_key or groq_key or puku_key
+    if api_key:
+        if groq_key:
+            base_url = "https://api.groq.com/openai/v1"
+            model = "llama-3.1-8b-instant"
+        elif puku_key:
+            base_url = "https://api.puku.sh/v1"
+            model = "gpt-4o-mini"
+        else:
+            base_url = "https://api.openai.com/v1"
+            model = "gpt-4o-mini"
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt_content},
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.0,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=3.5) as client:
+                resp = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    parsed = json.loads(content)
+                    if "directive_interpretation" in parsed and isinstance(parsed["directive_interpretation"], list):
+                        return parsed["directive_interpretation"]
+        except Exception as e:
+            logger.warning(f"OpenAI/Groq call failed or timed out: {e}")
 
     return None
 
@@ -307,13 +325,7 @@ async def interpret_operator_notes(
     notes: List[str],
     battery: BatteryInput,
 ) -> List[DirectiveInterpretationEntry]:
-    """
-    Interprets notes via LLM with deterministic guardrails and instantaneous fallback.
-    Guarantees that:
-    1. An LLM is part of the execution path when credentials are present.
-    2. Zero unhandled 500 errors or timeouts can ever occur.
-    3. Output strictly conforms to Section 04 and Section 08 requirements.
-    """
+    """Interprets notes via LLM with deterministic guardrails and instantaneous fallback."""
     raw_interpretations = await call_llm_api(notes, battery)
 
     if not raw_interpretations:
