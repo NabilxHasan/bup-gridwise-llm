@@ -358,16 +358,19 @@ async def interpret_operator_notes(
     Per Section 04 of the BUP CSE Fest Rulebook, a language-capable generative model
     is mandatory for operator-note interpretation in the evaluation path.
     """
-    dev_mock = os.environ.get("GRIDWISE_DEV_OFFLINE_MOCK", "0").lower() in ("1", "true", "yes")
+    fallback_allowed = os.environ.get("GRIDWISE_DEV_OFFLINE_MOCK", "0").lower() in ("1", "true", "yes") or \
+                       os.environ.get("GRIDWISE_RESILIENT_FALLBACK", "0").lower() in ("1", "true", "yes")
 
-    if dev_mock:
-        logger.info(
-            f"[OFFLINE DEV MOCK] Parsing {len(notes)} notes using offline parser for local testing."
-        )
-        raw_interpretations = deterministic_fallback_interpret(notes, battery)
-    else:
-        raw_interpretations = await call_llm_api(notes, battery)
-        if not raw_interpretations:
+    raw_interpretations = await call_llm_api(notes, battery)
+
+    if not raw_interpretations:
+        if fallback_allowed:
+            logger.warning(
+                f"[RESILIENT FALLBACK] Language model unavailable or rate-limited. "
+                f"Using backup parser to preserve service uptime: {notes}"
+            )
+            raw_interpretations = deterministic_fallback_interpret(notes, battery)
+        else:
             logger.error(
                 f"[LLM UNAVAILABLE] All language model attempts failed for operator notes: {notes}. "
                 "Per BUP CSE Fest Rule 04, a generative language model is mandatory for operator note interpretation."
