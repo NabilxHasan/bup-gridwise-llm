@@ -93,8 +93,8 @@ def render_slide_1():
 
     draw.rounded_rectangle([(80, 110), (WIDTH - 80, HEIGHT - 150)], radius=24, fill=CARD_BG, outline=CARD_BORDER, width=1)
     draw.rounded_rectangle([(80, 110), (WIDTH - 80, 116)], radius=4, fill=APPLE_BLUE)
-    
-    draw.text((140, 160), "HACKATHON PRELIMINARY ROUND · SYSTEM BENCHMARK", font=FONT_PILL, fill=APPLE_BLUE)
+    # Category tag
+    draw.text((140, 160), "HACKATHON PRELIMINARY ROUND · TEAM DU_UBERMENSCH", font=FONT_PILL, fill=APPLE_BLUE)
     draw.text((140, 200), "GridWise LLM", font=FONT_HERO, fill=TEXT_PRIMARY)
     draw.text((140, 280), "Autonomous Smart Campus Energy Optimization Engine", font=FONT_TITLE, fill=TEXT_SECONDARY)
     draw.text((140, 340), "Translating unstructured natural-language directives into mathematically verified linear programs", font=FONT_SUBTITLE, fill=APPLE_CYAN)
@@ -459,7 +459,7 @@ def generate_video_with_transitions():
 
     # Slide start times in seconds
     schedule = [
-        (0, 25, "Hello judges, this is Team GridWise presenting our solution for the BUP CSE Fest 2026 Smart Campus Energy Challenge."),
+        (0, 25, "Hello judges, this is Team DU_Ubermensch presenting our solution for the BUP CSE Fest 2026 Smart Campus Energy Challenge."),
         (25, 55, "We model the 24-hour campus dynamics, respecting battery rate limits, end-of-day neutrality, and operator directives."),
         (55, 100, "Our 4-stage pipeline parses notes with Gemini 2.5 Flash, sanitizes them via guardrails, and solves with HiGHS LP in <5ms."),
         (100, 135, "All 10 official test cases passed with a 0.00 BDT cost discrepancy and p95 latency under 4.3 seconds."),
